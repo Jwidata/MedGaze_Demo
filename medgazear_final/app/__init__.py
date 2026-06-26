@@ -1,0 +1,1 @@
+"""MedGazeAR foundation package."""

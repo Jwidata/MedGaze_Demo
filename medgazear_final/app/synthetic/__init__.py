@@ -1,0 +1,1 @@
+"""Synthetic gaze generation utilities."""

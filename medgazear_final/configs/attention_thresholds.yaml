@@ -1,0 +1,9 @@
+# Explainable simulation/reference thresholds, not clinical truth.
+minimum_valid_time_on_roi_slice_ms: 500
+minimum_gaze_validity_ratio: 0.60
+reviewed_min_inside_roi_dwell_ms: 800
+reviewed_min_inside_hit_count: 8
+reviewed_min_fixation_count_inside_roi: 1
+weak_min_inside_roi_dwell_ms: 250
+weak_min_near_roi_dwell_ms: 700
+weak_min_near_hit_count: 8
