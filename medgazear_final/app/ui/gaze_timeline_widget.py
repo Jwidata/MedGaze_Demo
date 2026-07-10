@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pandas as pd
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
+from PyQt6.QtCore import QSignalBlocker, Qt, QTimer, pyqtSignal
+from PyQt6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider, QSizePolicy, QWidget
 
 
 class GazeTimelineWidget(QWidget):
@@ -12,45 +12,66 @@ class GazeTimelineWidget(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
+        self.setObjectName("TimelineShell")
+        self.setMinimumHeight(58)
+        self.setMaximumHeight(68)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.samples = pd.DataFrame(columns=["timestamp_ms", "is_valid"])
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._advance)
-        self.label = QLabel("Replay: select an ROI/session or behaviour example")
+
+        self.source_label = QLabel("Synthetic Replay")
+        self.source_label.setObjectName("CompactMeta")
         self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.slider.valueChanged.connect(self._emit_current)
+        self.elapsed_label = QLabel("0.0s")
+        self.elapsed_label.setObjectName("CompactMeta")
+
         self.play_button = QPushButton("Play")
         self.pause_button = QPushButton("Pause")
         self.reset_button = QPushButton("Reset")
-        self.live_status = QLabel("Live Tobii mode: use Start/Stop live gaze controls.")
+        for button in (self.play_button, self.pause_button, self.reset_button):
+            button.setMaximumWidth(68)
+
+        self.live_status = QLabel("Tobii Live")
+        self.live_status.setObjectName("CompactMeta")
         self.live_status.setVisible(False)
+
         self.speed = QComboBox()
         self.speed.addItems(["0.5x", "1x", "2x", "4x"])
         self.speed.setCurrentText("1x")
-        self.follow_slice = QCheckBox("Follow gaze slice during replay")
+        self.speed.setMaximumWidth(84)
+        self.follow_slice = QCheckBox("Follow gaze slice")
         self.follow_slice.setChecked(True)
+
         self.play_button.clicked.connect(self.play)
         self.pause_button.clicked.connect(self.pause)
         self.reset_button.clicked.connect(self.reset)
-        controls = QHBoxLayout()
-        self.speed_label = QLabel("Speed")
-        self.replay_controls = [self.play_button, self.pause_button, self.reset_button, self.speed_label, self.speed, self.follow_slice]
-        for widget in self.replay_controls:
-            controls.addWidget(widget)
-        controls.addStretch(1)
-        controls.addWidget(self.live_status)
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.label)
-        layout.addWidget(self.slider)
-        layout.addLayout(controls)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(8)
+        layout.addWidget(self.source_label)
+        layout.addWidget(self.slider, stretch=1)
+        layout.addWidget(self.elapsed_label)
+        layout.addWidget(self.play_button)
+        layout.addWidget(self.pause_button)
+        layout.addWidget(self.reset_button)
+        layout.addWidget(self.speed)
+        layout.addWidget(self.follow_slice)
+        layout.addWidget(self.live_status)
 
     def set_samples(self, samples: pd.DataFrame) -> None:
         if samples.empty:
             self.samples = pd.DataFrame(columns=["timestamp_ms", "is_valid"])
         else:
             self.samples = samples.sort_values("timestamp_ms").reset_index(drop=True) if "timestamp_ms" in samples.columns else samples.reset_index(drop=True)
-        self.slider.setMinimum(0)
-        self.slider.setMaximum(max(0, len(self.samples) - 1))
-        self.reset()
+        self.timer.stop()
+        with QSignalBlocker(self.slider):
+            self.slider.setMinimum(0)
+            self.slider.setMaximum(max(0, len(self.samples) - 1))
+            self.slider.setValue(0)
         self._update_label(0)
 
     def play(self) -> None:
@@ -66,6 +87,8 @@ class GazeTimelineWidget(QWidget):
         self.slider.setValue(0)
         if not self.samples.empty:
             self._emit_current(0)
+        else:
+            self.elapsed_label.setText("0.0s")
 
     def follow_enabled(self) -> bool:
         return self.follow_slice.isChecked()
@@ -77,12 +100,15 @@ class GazeTimelineWidget(QWidget):
         self.slider.setEnabled(enabled)
         self.speed.setEnabled(enabled)
         self.follow_slice.setEnabled(enabled)
-        for widget in self.replay_controls:
+        for widget in (self.play_button, self.pause_button, self.reset_button, self.speed, self.follow_slice, self.elapsed_label, self.slider):
             widget.setVisible(enabled)
+        self.source_label.setText("Synthetic Replay" if enabled else "Tobii Live")
         self.live_status.setVisible(not enabled)
         if not enabled:
             self.timer.stop()
-            self.label.setText("Live Tobii mode: use Start/Stop live gaze controls.")
+
+    def set_live_summary(self, sample_count: int, signal_quality: str) -> None:
+        self.live_status.setText(f"Ready | Samples: {sample_count} | Signal: {signal_quality}")
 
     def _advance(self) -> None:
         value = self.slider.value() + 1
@@ -104,16 +130,8 @@ class GazeTimelineWidget(QWidget):
 
     def _update_label(self, index: int) -> None:
         if self.samples.empty or index >= len(self.samples):
-            self.label.setText("Replay: select an ROI/session or behaviour example")
+            self.elapsed_label.setText("0.0s")
             return
         row = self.samples.iloc[index]
-        valid = "valid" if bool(row.get("is_valid", False)) else "invalid/dropout"
-        flags = []
-        if bool(row.get("is_outside_ct", False)):
-            flags.append("outside CT")
-        if bool(row.get("is_ui_glance", False)):
-            flags.append("UI glance")
-        suffix = f" | {', '.join(flags)}" if flags else ""
         seconds = float(row.get("timestamp_ms", 0)) / 1000.0
-        slice_text = int(float(row.get("ct_stack_index", -1))) + 1 if "ct_stack_index" in row else "-"
-        self.label.setText(f"Replay: |●{'─' * 14}| {seconds:.1f} sec | Current Slice {slice_text} | Speed {self.speed.currentText()} | {valid}{suffix}")
+        self.elapsed_label.setText(f"{seconds:.1f}s")

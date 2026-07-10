@@ -6,6 +6,14 @@ import numpy as np
 from PIL import Image
 
 
+WINDOW_PRESETS = {
+    "Lung": (-600.0, 1500.0),
+    "Mediastinum": (40.0, 400.0),
+    "Bone": (300.0, 1500.0),
+    "Soft tissue": (50.0, 350.0),
+}
+
+
 def window_ct_pixels(pixels: np.ndarray, center: float = -600.0, width: float = 1500.0) -> Image.Image:
     data = pixels.astype(np.float32)
     if width <= 1:
@@ -26,3 +34,7 @@ def dicom_window_value(value: object, default: float) -> float:
         return float(value)
     except Exception:
         return default
+
+
+def window_preset(name: str) -> tuple[float, float]:
+    return WINDOW_PRESETS.get(name, WINDOW_PRESETS["Lung"])

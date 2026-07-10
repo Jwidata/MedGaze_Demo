@@ -20,6 +20,9 @@ class CTSlice:
     instance_number: int | None = None
     image_position_z: float | None = None
     image: Image.Image | None = None
+    pixels = None
+    default_center: float | None = None
+    default_width: float | None = None
 
 
 @dataclass
@@ -33,12 +36,27 @@ class CTSeries:
     def total_slices(self) -> int:
         return len(self.slices)
 
-    def image_for_index(self, index: int) -> Image.Image | None:
+    def image_for_index(self, index: int, center: float | None = None, width: float | None = None) -> Image.Image | None:
         if 0 <= index < len(self.slices):
             slice_ = self.slices[index]
-            if slice_.image is None:
-                slice_.image = _load_ct_image(slice_.file_path)
-            return slice_.image
+            if center is None and width is None:
+                if slice_.image is None:
+                    pixels, default_center, default_width = _load_ct_pixels(slice_.file_path)
+                    slice_.pixels = pixels
+                    slice_.default_center = default_center
+                    slice_.default_width = default_width
+                    slice_.image = window_ct_pixels(pixels, center=default_center, width=default_width)
+                return slice_.image
+            if slice_.pixels is None or slice_.default_center is None or slice_.default_width is None:
+                pixels, default_center, default_width = _load_ct_pixels(slice_.file_path)
+                slice_.pixels = pixels
+                slice_.default_center = default_center
+                slice_.default_width = default_width
+                if slice_.image is None:
+                    slice_.image = window_ct_pixels(pixels, center=default_center, width=default_width)
+            use_center = slice_.default_center if center is None else float(center)
+            use_width = slice_.default_width if width is None else float(width)
+            return window_ct_pixels(slice_.pixels, center=use_center, width=use_width)
         return None
 
 
@@ -78,13 +96,13 @@ def _image_position_z(value: object) -> float | None:
         return None
 
 
-def _load_ct_image(path: Path) -> Image.Image:
+def _load_ct_pixels(path: Path) -> tuple[object, float, float]:
     try:
         dataset = pydicom.dcmread(path)
         pixels = dataset.pixel_array.astype("float32")
         pixels = pixels * float(getattr(dataset, "RescaleSlope", 1.0) or 1.0) + float(getattr(dataset, "RescaleIntercept", 0.0) or 0.0)
         center = dicom_window_value(getattr(dataset, "WindowCenter", None), -600.0)
         width = dicom_window_value(getattr(dataset, "WindowWidth", None), 1500.0)
-        return window_ct_pixels(pixels, center=center, width=width)
+        return pixels, center, width
     except Exception as exc:
         raise RuntimeError(f"Failed to load CT pixels from {path}: {exc}") from exc

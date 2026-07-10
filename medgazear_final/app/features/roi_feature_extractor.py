@@ -59,7 +59,15 @@ def _point_in_roi(x: float, y: float, roi: dict[str, str], margin: float) -> boo
 def _sample_interval_ms(samples: list[dict[str, str]]) -> float:
     if len(samples) < 2:
         return 0.0
-    return float(samples[1]["timestamp_ms"]) - float(samples[0]["timestamp_ms"])
+    intervals = []
+    for previous, current in zip(samples, samples[1:]):
+        delta = float(current["timestamp_ms"]) - float(previous["timestamp_ms"])
+        if delta > 0:
+            intervals.append(delta)
+    if not intervals:
+        return 0.0
+    intervals = sorted(intervals)
+    return float(intervals[len(intervals) // 2])
 
 
 def _mean(values: list[float]) -> float:

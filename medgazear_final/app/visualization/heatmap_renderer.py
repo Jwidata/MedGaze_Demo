@@ -34,9 +34,10 @@ def generate_heatmap_array(samples: pd.DataFrame, image_space: ImageSpace, sigma
 def render_heatmap_layer(samples: pd.DataFrame, image_space: ImageSpace, alpha: int = 170) -> Image.Image:
     heatmap = generate_heatmap_array(samples, image_space)
     rgba = np.zeros((image_space.height, image_space.width, 4), dtype=np.uint8)
-    rgba[..., 0] = np.clip(heatmap * 255, 0, 255).astype(np.uint8)
-    rgba[..., 1] = np.clip((1 - np.abs(heatmap - 0.5) * 2) * 190, 0, 190).astype(np.uint8)
-    rgba[..., 3] = np.clip(heatmap * alpha, 0, alpha).astype(np.uint8)
+    rgba[..., 0] = np.clip(np.maximum(0.0, (heatmap - 0.45) / 0.55) * 255, 0, 255).astype(np.uint8)
+    rgba[..., 1] = np.clip(np.maximum(0.0, 1.0 - np.abs(heatmap - 0.30) / 0.30) * 255, 0, 255).astype(np.uint8)
+    rgba[..., 2] = np.clip(np.maximum(0.0, 1.0 - heatmap / 0.25) * 40, 0, 40).astype(np.uint8)
+    rgba[..., 3] = np.clip(np.maximum(0.0, (heatmap - 0.08) / 0.92) * alpha, 0, alpha).astype(np.uint8)
     return Image.fromarray(rgba, mode="RGBA")
 
 

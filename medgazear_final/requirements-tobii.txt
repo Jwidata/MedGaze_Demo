@@ -1,0 +1,4 @@
+# Tobii Pro SDK Python binding. Import name is tobii_research.
+# Current official wheels are primarily for Python 3.10.
+# Install with: python -m pip install -r requirements-tobii.txt
+tobii-research>=2.1.0

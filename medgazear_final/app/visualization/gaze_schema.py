@@ -13,14 +13,20 @@ GAZE_SCHEMA_COLUMNS = [
     "case_id",
     "roi_id",
     "slice_index",
+    "ct_stack_index",
     "timestamp_ms",
     "image_x",
     "image_y",
     "screen_x",
     "screen_y",
     "is_valid",
+    "is_dropout",
+    "is_blink",
+    "is_invalid_burst",
     "is_outside_ct",
     "is_ui_glance",
+    "jitter_x",
+    "jitter_y",
 ]
 
 
@@ -33,15 +39,28 @@ def normalize_gaze_samples(samples: pd.DataFrame, source_type: str = "synthetic"
     rows = samples.copy()
     if "source_type" not in rows.columns:
         rows["source_type"] = source_type
+    if "ct_stack_index" not in rows.columns and "slice_index" in rows.columns:
+        rows["ct_stack_index"] = rows["slice_index"]
+    defaults = {
+        "is_dropout": False,
+        "is_blink": False,
+        "is_invalid_burst": False,
+        "jitter_x": 0.0,
+        "jitter_y": 0.0,
+    }
+    for column, value in defaults.items():
+        if column not in rows.columns:
+            rows[column] = value
     missing = [column for column in GAZE_SCHEMA_COLUMNS if column not in rows.columns]
     if missing:
         raise ValueError(f"Gaze samples missing required schema columns: {missing}")
-    rows = rows[GAZE_SCHEMA_COLUMNS].copy()
+    ordered = [*GAZE_SCHEMA_COLUMNS, *[column for column in rows.columns if column not in GAZE_SCHEMA_COLUMNS]]
+    rows = rows[ordered].copy()
     for column in ("session_id", "case_id", "roi_id", "source_type"):
         rows[column] = rows[column].astype(str)
-    for column in ("slice_index", "timestamp_ms", "image_x", "image_y", "screen_x", "screen_y"):
+    for column in ("slice_index", "ct_stack_index", "timestamp_ms", "image_x", "image_y", "screen_x", "screen_y", "jitter_x", "jitter_y"):
         rows[column] = pd.to_numeric(rows[column], errors="coerce")
-    for column in ("is_valid", "is_outside_ct", "is_ui_glance"):
+    for column in ("is_valid", "is_dropout", "is_blink", "is_invalid_burst", "is_outside_ct", "is_ui_glance"):
         rows[column] = rows[column].map(_to_bool)
     if rows[["session_id", "case_id", "roi_id"]].isna().any().any():
         raise ValueError("Gaze samples contain missing identifiers.")

@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.logging_utils import configure_logging
 from app.core.paths import resolve_output_root
-from app.ui.workstation_main import launch_review_workstation, smoke_test_workstation
+from app.ui_training import launch_review_workstation, smoke_test_workstation
 from scripts._common import build_parser
 
 

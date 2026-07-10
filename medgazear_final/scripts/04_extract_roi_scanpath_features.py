@@ -4,27 +4,22 @@ from __future__ import annotations
 
 import csv
 import sys
-from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.logging_utils import configure_logging
 from app.core.paths import resolve_output_root
+from app.features.behavior_feature_builder import build_behavior_feature_row
+from app.features.roi_spatial_modes import RoiMaskLibrary
 from app.features.feature_quality_report import write_feature_quality_report
 from app.features.feature_schema import (
-    GEOMETRY_FEATURES,
     METADATA_COLUMNS,
-    QUALITY_FEATURES,
     SCANPATH_FEATURES,
-    TEMPORAL_FEATURES,
     behavior_feature_columns,
     validate_no_leakage,
     write_feature_schema,
 )
-from app.features.roi_feature_extractor import extract_roi_features, roi_masks_for_samples
-from app.features.scanpath_feature_extractor import extract_scanpath_features
-from app.features.temporal_feature_extractor import detect_fixations, extract_temporal_features
 from scripts._common import build_parser
 
 
@@ -32,6 +27,7 @@ def main() -> int:
     parser = build_parser("Extract ROI-level gaze features from degraded synthetic gaze samples.")
     parser.add_argument("--gaze", required=True, help="Raw behavior-labeled synthetic gaze CSV.")
     parser.add_argument("--roi-geometry", required=True, help="SEG ROI geometry CSV.")
+    parser.add_argument("--geometry-mode", choices=["bbox", "mask"], default="bbox")
     args = parser.parse_args()
 
     logger = configure_logging(args.log_level)
@@ -39,12 +35,13 @@ def main() -> int:
     output_dir = output_root / "features"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    rows = extract_feature_rows(Path(args.gaze), Path(args.roi_geometry))
+    rows = extract_feature_rows(Path(args.gaze), Path(args.roi_geometry), geometry_mode=args.geometry_mode)
     validate_no_leakage(behavior_feature_columns())
-    _write_csv(output_dir / "roi_level_features.csv", rows, behavior_feature_columns())
-    _write_csv(output_dir / "behavior_feature_table.csv", rows, behavior_feature_columns())
-    _write_csv(output_dir / "scanpath_features.csv", rows, METADATA_COLUMNS + SCANPATH_FEATURES)
-    _write_csv(output_dir / "slice_level_features.csv", _slice_level_rows(rows), METADATA_COLUMNS + ["roi_count_on_slice", "mean_gaze_validity_ratio", "mean_total_gaze_time_inside_roi_ms"])
+    full_columns = behavior_feature_columns() + ["geometry_mode"]
+    _write_csv(output_dir / "roi_level_features.csv", rows, full_columns)
+    _write_csv(output_dir / "behavior_feature_table.csv", rows, full_columns)
+    _write_csv(output_dir / "scanpath_features.csv", rows, METADATA_COLUMNS + SCANPATH_FEATURES + ["geometry_mode"])
+    _write_csv(output_dir / "slice_level_features.csv", _slice_level_rows(rows), METADATA_COLUMNS + ["roi_count_on_slice", "mean_gaze_validity_ratio", "mean_total_gaze_time_inside_roi_ms", "geometry_mode"])
     write_feature_schema(output_dir / "feature_schema.md")
     write_feature_quality_report(output_dir / "feature_quality_report.md", rows)
     logger.info("Feature rows written: %s", len(rows))
@@ -52,64 +49,20 @@ def main() -> int:
     return 0
 
 
-def extract_feature_rows(gaze_csv: Path, roi_geometry_csv: Path) -> list[dict[str, object]]:
+def extract_feature_rows(gaze_csv: Path, roi_geometry_csv: Path, geometry_mode: str = "bbox") -> list[dict[str, object]]:
     roi_index = {row["roi_id"]: row for row in _read_csv(roi_geometry_csv) if row.get("rejection_reason", "") == "" and row.get("is_empty") == "false"}
-    grouped: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
+    grouped: dict[tuple[str, str], list[dict[str, str]]] = {}
+    mask_library = RoiMaskLibrary() if geometry_mode == "mask" else None
     for sample in _read_csv(gaze_csv):
         if sample.get("roi_id") in roi_index:
-            grouped[(sample["session_id"], sample["roi_id"])].append(sample)
+            grouped.setdefault((sample["session_id"], sample["roi_id"]), []).append(sample)
 
-    slice_context = _slice_context(roi_index.values())
     feature_rows: list[dict[str, object]] = []
     for (_session_id, roi_id), samples in sorted(grouped.items()):
-        samples.sort(key=lambda row: int(float(row["sample_index"])))
         roi = roi_index[roi_id]
-        inside, near, same_slice = roi_masks_for_samples(samples, roi)
-        fixations = detect_fixations(samples)
-        row: dict[str, object] = {column: samples[0][column] for column in METADATA_COLUMNS}
-        row.update(extract_roi_features(samples, roi, fixations))
-        row.update(extract_scanpath_features(samples, inside, near, same_slice))
-        row.update(extract_temporal_features(samples, inside, fixations))
-        row.update(_quality_features(samples))
-        row.update(_geometry_features(roi, slice_context))
-        feature_rows.append(row)
+        result = build_behavior_feature_row(pd.DataFrame(samples), roi, geometry_mode=geometry_mode, mask_library=mask_library)
+        feature_rows.append(result.row)
     return feature_rows
-
-
-def _quality_features(samples: list[dict[str, str]]) -> dict[str, float]:
-    return {
-        "gaze_validity_ratio": _ratio(samples, "is_valid"),
-        "dropout_ratio": _ratio(samples, "is_dropout"),
-        "blink_ratio": _ratio(samples, "is_blink"),
-        "invalid_burst_ratio": _ratio(samples, "is_invalid_burst"),
-        "outside_ct_ratio": _ratio(samples, "is_outside_ct"),
-        "jitter_px": _mean([(float(row["jitter_x"]) ** 2 + float(row["jitter_y"]) ** 2) ** 0.5 for row in samples]),
-    }
-
-
-def _geometry_features(roi: dict[str, str], slice_context: dict[tuple[str, str], int]) -> dict[str, float | int]:
-    rows = float(roi["rows"])
-    columns = float(roi["columns"])
-    key = (roi["ct_series_instance_uid"], roi["slice_index"])
-    rois_on_slice = slice_context.get(key, 1)
-    return {
-        "roi_area_px": float(roi["mask_area_px"]),
-        "roi_bbox_width": float(roi["bbox_width"]),
-        "roi_bbox_height": float(roi["bbox_height"]),
-        "roi_center_x": float(roi["centroid_x"]),
-        "roi_center_y": float(roi["centroid_y"]),
-        "normalized_roi_position_x": float(roi["centroid_x"]) / columns if columns else 0.0,
-        "normalized_roi_position_y": float(roi["centroid_y"]) / rows if rows else 0.0,
-        "number_of_rois_on_slice": rois_on_slice,
-        "roi_density_context": rois_on_slice / max(1.0, rows * columns / 100000.0),
-    }
-
-
-def _slice_context(rois: object) -> dict[tuple[str, str], int]:
-    counts: dict[tuple[str, str], int] = defaultdict(int)
-    for roi in rois:
-        counts[(roi["ct_series_instance_uid"], roi["slice_index"])] += 1
-    return counts
 
 
 def _slice_level_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -122,20 +75,13 @@ def _slice_level_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
         base["roi_count_on_slice"] = len(group)
         base["mean_gaze_validity_ratio"] = _mean([float(row["gaze_validity_ratio"]) for row in group])
         base["mean_total_gaze_time_inside_roi_ms"] = _mean([float(row["total_gaze_time_inside_roi_ms"]) for row in group])
+        base["geometry_mode"] = group[0].get("geometry_mode", "bbox")
         output.append(base)
     return output
 
 
-def _ratio(rows: list[dict[str, str]], key: str) -> float:
-    return sum(_bool(row[key]) for row in rows) / len(rows) if rows else 0.0
-
-
 def _mean(values: list[float]) -> float:
     return sum(values) / len(values) if values else 0.0
-
-
-def _bool(value: str | bool) -> bool:
-    return value is True or str(value).lower() == "true"
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:

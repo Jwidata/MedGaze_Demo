@@ -101,8 +101,11 @@ python scripts/10_run_cognitive_load_proxy_analysis.py --output-root outputs
 python scripts/11_generate_gaze_visualizations.py --gaze outputs/synthetic_gaze/raw_behavior_labeled_synthetic_gaze.csv --roi-geometry outputs/roi_geometry/seg_roi_geometry.csv --features outputs/features/behavior_feature_table.csv --attention outputs/attention/rule_attention_status.csv --cognitive outputs/cognitive_load/cognitive_proxy_labels.csv --output-root outputs --examples-per-behavior 3 --interactive-report
 python scripts/20_launch_review_workstation.py --smoke-test
 python scripts/20_launch_review_workstation.py --source synthetic
+python scripts/21_check_tobii_sdk.py
 pytest
 ```
+
+Optional Tobii setup instructions are in `docs/TOBII_SETUP.md`. Use Python 3.10 for Tobii SDK installation.
 
 ## Key Outputs
 
@@ -200,6 +203,7 @@ Thesis-facing documents are in `docs/`:
 - `docs/validation_plan.md`
 - `docs/thesis_outline.md`
 - `docs/project_journey.md`
+- `docs/TOBII_SETUP.md`
 
 ## Interpretation Guidance
 

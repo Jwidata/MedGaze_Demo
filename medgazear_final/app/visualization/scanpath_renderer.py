@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 from PIL import Image, ImageDraw
 
+from app.features.temporal_feature_extractor import detect_fixations
 from app.visualization.coordinate_mapper import ImageSpace, clip_samples_to_image
 from app.visualization.roi_overlay_renderer import create_placeholder_canvas, render_roi_layer
 
@@ -21,27 +22,26 @@ def render_gaze_points_layer(samples: pd.DataFrame, image_space: ImageSpace) -> 
     for _, row in valid.iloc[::stride].iterrows():
         x = float(row["image_x"])
         y = float(row["image_y"])
-        draw.ellipse((x - 1.5, y - 1.5, x + 1.5, y + 1.5), fill=(0, 180, 255, 135))
+        draw.ellipse((x - 4.0, y - 4.0, x + 4.0, y + 4.0), fill=(8, 16, 24, 230))
+        draw.ellipse((x - 2.5, y - 2.5, x + 2.5, y + 2.5), fill=(70, 220, 255, 240))
     return layer
 
 
 def render_scanpath_layer(samples: pd.DataFrame, image_space: ImageSpace) -> Image.Image:
     layer = Image.new("RGBA", (image_space.width, image_space.height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
-    segments = _valid_segments(samples, image_space)
-    if not segments:
+    valid = _valid_samples(samples, image_space)
+    if valid.empty:
         return layer
-    total_points = sum(len(segment) for segment in segments)
-    point_index = 0
-    for segment in segments:
-        if len(segment) < 2:
-            continue
-        stride = max(1, len(segment) // 120)
-        points = [(float(row["image_x"]), float(row["image_y"])) for _, row in segment.iloc[::stride].iterrows()]
-        for start, end in zip(points, points[1:]):
-            intensity = int(80 + 175 * point_index / max(1, total_points - 1))
-            draw.line((*start, *end), fill=(255, intensity, 0, 185), width=2)
-            point_index += 1
+    fixations = detect_fixations(valid.to_dict("records"))
+    if len(fixations) < 2:
+        return layer
+    points = [(float(fix["x"]), float(fix["y"])) for fix in fixations[-8:]]
+    for index, (start, end) in enumerate(zip(points, points[1:]), start=1):
+        intensity = int(110 + 120 * index / max(1, len(points) - 1))
+        draw.line((*start, *end), fill=(255, intensity, 40, 200), width=2)
+    for x, y in points:
+        draw.ellipse((x - 3.0, y - 3.0, x + 3.0, y + 3.0), fill=(255, 214, 96, 220))
     return layer
 
 

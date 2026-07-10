@@ -45,6 +45,28 @@ def split_dataset(dataset: pd.DataFrame, seed: int = 42, split: str = "stratifie
 def train_models(dataset: pd.DataFrame, feature_columns: list[str] | None = None, seed: int = 42, split: str = "stratified") -> TrainResult:
     feature_columns = feature_columns or allowed_feature_columns(dataset)
     train, valid, test = split_dataset(dataset, seed, split)
+    split_summary = {
+        "split": split,
+        "seed": seed,
+        "train_rows": len(train),
+        "validation_rows": len(valid),
+        "test_rows": len(test),
+        "train_validation_rows": len(train) + len(valid),
+        "selection_primary_metric": "validation_macro_f1",
+        "selection_secondary_metric": "validation_balanced_accuracy",
+    }
+    return train_models_from_splits(train, valid, test, feature_columns, seed=seed, split_summary=split_summary)
+
+
+def train_models_from_splits(
+    train: pd.DataFrame,
+    valid: pd.DataFrame,
+    test: pd.DataFrame,
+    feature_columns: list[str],
+    seed: int = 42,
+    feature_set_name: str = "all_behavior_features",
+    split_summary: dict[str, object] | None = None,
+) -> TrainResult:
     X_train = train[feature_columns].fillna(0).astype(float)
     y_train = train["hidden_behavior_label"].astype(str)
     X_valid = valid[feature_columns].fillna(0).astype(float)
@@ -57,12 +79,12 @@ def train_models(dataset: pd.DataFrame, feature_columns: list[str] | None = None
         try:
             fitted_model = _fit_model(model, model_name, X_train, y_train)
             pred, proba = _predict_model(fitted_model, X_valid)
-            row = metric_row("all_behavior_features", model_name, y_valid, pred, proba)
+            row = metric_row(feature_set_name, model_name, y_valid, pred, proba)
             row["evaluation_split"] = "validation"
             rows.append(row)
             candidates.append((row["macro_f1"], row["balanced_accuracy"], model_name, model))
         except Exception as exc:
-            rows.append({"feature_set": "all_behavior_features", "model": model_name, "evaluation_split": "validation", "accuracy": 0, "balanced_accuracy": 0, "macro_f1": 0, "weighted_f1": 0, "mean_confidence": 0, "min_confidence": 0, "max_confidence": 0, "per_class_metrics_json": "{}", "confusion_matrix_json": "{}", "skip_reason": str(exc)})
+            rows.append({"feature_set": feature_set_name, "model": model_name, "evaluation_split": "validation", "accuracy": 0, "balanced_accuracy": 0, "macro_f1": 0, "weighted_f1": 0, "mean_confidence": 0, "min_confidence": 0, "max_confidence": 0, "per_class_metrics_json": "{}", "confusion_matrix_json": "{}", "skip_reason": str(exc)})
     if not candidates:
         raise RuntimeError("No behavior models were successfully fitted.")
     _best_f1, _best_balanced, best_model_name, best_template = sorted(candidates, key=lambda item: (item[0], item[1]), reverse=True)[0]
@@ -71,19 +93,17 @@ def train_models(dataset: pd.DataFrame, feature_columns: list[str] | None = None
     y_train_valid = train_valid["hidden_behavior_label"].astype(str)
     best_model = _fit_model(clone(best_template), best_model_name, X_train_valid, y_train_valid)
     best_pred, best_proba = _predict_model(best_model, X_test)
-    test_row = metric_row("all_behavior_features", best_model_name, y_test, best_pred, best_proba)
+    test_row = metric_row(feature_set_name, best_model_name, y_test, best_pred, best_proba)
     test_row["evaluation_split"] = "test"
-    split_summary = {
-        "split": split,
-        "seed": seed,
-        "train_rows": len(train),
-        "validation_rows": len(valid),
-        "test_rows": len(test),
-        "train_validation_rows": len(train_valid),
-        "selection_primary_metric": "validation_macro_f1",
-        "selection_secondary_metric": "validation_balanced_accuracy",
-    }
-    return TrainResult(pd.DataFrame(rows), pd.DataFrame([test_row]), best_model, best_model_name, feature_columns, (X_test, y_test), list(best_pred), split_summary)
+    final_split_summary = dict(split_summary or {})
+    final_split_summary.setdefault("seed", seed)
+    final_split_summary.setdefault("train_rows", len(train))
+    final_split_summary.setdefault("validation_rows", len(valid))
+    final_split_summary.setdefault("test_rows", len(test))
+    final_split_summary.setdefault("train_validation_rows", len(train_valid))
+    final_split_summary.setdefault("selection_primary_metric", "validation_macro_f1")
+    final_split_summary.setdefault("selection_secondary_metric", "validation_balanced_accuracy")
+    return TrainResult(pd.DataFrame(rows), pd.DataFrame([test_row]), best_model, best_model_name, feature_columns, (X_test, y_test), list(best_pred), final_split_summary)
 
 
 def _fit_model(model, model_name: str, X_train: pd.DataFrame, y_train: pd.Series):
